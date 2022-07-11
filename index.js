@@ -81,7 +81,7 @@ class SberQr {
   /**
    * Создать заказ на оплату
    *
-   * @param {{member_id: string, id_qr: string, order_sum: number, order_number: string, description: string, currency: string}} options_param
+   * @param {{order_sum: number, order_number: string, description: string, currency: string}} options_param
    */
   async creteOrder(options_param) {
     const {token, rqUID} = await this.getToken('https://api.sberbank.ru/qr/order.create');
@@ -103,11 +103,11 @@ class SberQr {
       body: JSON.stringify({
         rq_uid: rqUID,
         rq_tm: date,
-        member_id: options_param.member_id,
+        member_id: this.config.member_id,
         order_number: options_param.order_number,
         order_create_date: date,
         order_params_type: options_param.order_params_type,
-        id_qr: options_param.id_qr,
+        id_qr: this.config.terminal_id,
         order_sum,
         currency: options_param.currency,
         description: options_param.description,
