@@ -1,0 +1,19 @@
+{
+  "name": "sber-qr-pay",
+  "version": "1.0.0",
+  "description": "Модуль для работы с API по оплате через QR код.",
+  "main": "index.js",
+  "scripts": {
+    "build": "npx tsc",
+    "start": "node app.js",
+    "dev": "nodemon -q app.js"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "dependencies": {
+    "js-base64": "^3.7.2",
+    "nanoid": "^3.1.21",
+    "request-promise": "^4.2.6"
+  }
+}
