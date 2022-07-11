@@ -12,6 +12,7 @@
   "author": "",
   "license": "ISC",
   "dependencies": {
+    "fs": "^0.0.1-security",
     "js-base64": "^3.7.2",
     "nanoid": "^3.1.21",
     "request-promise": "^4.2.6"

@@ -2,10 +2,9 @@ const base64 = require('js-base64');
 const {customAlphabet} = require('nanoid');
 const nanoid = customAlphabet('1234567890abcdefABCDEF', 32);
 const rp = require('request-promise');
-
 const fs = require('fs');
 
-module.exports = class {
+class SberQr {
   constructor(
     {
       client_id,
@@ -14,6 +13,7 @@ module.exports = class {
       pkcs12_password,
       member_id,
       terminal_id,
+      sbp_member_id,
     },
   ) {
     const encoded_cred = base64.encode(`${client_id}:${client_secret}`);
@@ -26,53 +26,51 @@ module.exports = class {
       pkcs12_password,
       member_id,
       terminal_id,
-    };
-
-    this.urls = {
-      access_token_url: 'https://api.sberbank.ru:8443/prod/tokens/v2/oauth',
+      sbp_member_id,
     };
   }
 
-  generateRqUID() {
+  __generateRqUID() {
     return nanoid();
   }
 
-  async getToken(scope) {
-    let config = this.config;
-
-    const agentOptions = {
-      pfx: config.pkcs12_filename,
-      passphrase: config.pkcs12_password,
+  __getAgentOptions() {
+    return {
+      pfx: Buffer.isBuffer(this.config.pkcs12_filename) ? this.config.pkcs12_filename : fs.readFileSync(this.config.pkcs12_filename),
+      passphrase: this.config.pkcs12_password,
     };
+  }
 
+  async getToken(scope) {
     const form = {
       grant_type: 'client_credentials',
       scope: scope,
     };
 
-    let client_id = config.client_id;
+    let client_id = this.config.client_id;
 
-    const rqUID = this.generateRqUID();
+    const rqUID = this.__generateRqUID();
 
     let reqOptions = {
       method: 'POST',
-      url: this.urls.access_token_url,
+      url: 'https://api.sberbank.ru:8443/prod/tokens/v2/oauth',
       headers: {
         accept: 'application/json',
         'Content-Type': 'application/x-www-form-urlencoded',
         RqUID: rqUID,
-        'Authorization': `Basic ${config.encoded_cred}`,
+        'Authorization': `Basic ${this.config.encoded_cred}`,
         'x-ibm-client-id': client_id,
       },
       form,
-      agentOptions: {
-        pfx: Buffer.isBuffer(agentOptions.pfx) ? agentOptions.pfx : fs.readFileSync(agentOptions.pfx),
-        passphrase: agentOptions.passphrase,
-      },
+      agentOptions: this.__getAgentOptions(),
     };
 
-    const token = await rp(reqOptions)
-      .then(res => JSON.parse(res));
+    let token;
+    await rp(reqOptions)
+      .then(res => JSON.parse(res))
+      .then(res => {
+        token = res;
+      });
 
     return {
       token,
@@ -80,14 +78,16 @@ module.exports = class {
     };
   }
 
-  async creteOrder(options_param, token, RqUID, config) {
-    const agentOptions = {
-      pfx: config.pkcs12_filename,
-      passphrase: config.pkcs12_password,
-    };
+  /**
+   * Создать заказ на оплату
+   *
+   * @param {{member_id: string, id_qr: string, order_sum: number, order_number: string, description: string, currency: string}} options_param
+   */
+  async creteOrder(options_param) {
+    const {token, rqUID} = await this.getToken('https://api.sberbank.ru/qr/order.create');
 
     const date = new Date().toISOString().slice(0, 19) + 'Z';
-    let order_sum = options_param.order_sum * 100; // в копейках
+    let order_sum = options_param.order_sum * 100; // в копейках!!
 
     let reqOptions = {
       url: 'https://api.sberbank.ru:8443/prod/qr/order/v3/creation',
@@ -95,13 +95,13 @@ module.exports = class {
       headers: {
         accept: 'application/json',
         Authorization: `Bearer ${token.access_token}`,
-        'x-Introspect-RqUID': RqUID,
-        'RqUID': RqUID,
-        'X-IBM-Client-Id': config.client_id,
+        'x-Introspect-RqUID': rqUID,
+        'RqUID': rqUID,
+        'X-IBM-Client-Id': this.config.client_id,
         'Content-Type': 'application/json',
       },
       body: JSON.stringify({
-        rq_uid: RqUID,
+        rq_uid: rqUID,
         rq_tm: date,
         member_id: options_param.member_id,
         order_number: options_param.order_number,
@@ -111,12 +111,9 @@ module.exports = class {
         order_sum,
         currency: options_param.currency,
         description: options_param.description,
-        'sbp_member_id': '100000000111',
+        sbp_member_id: this.config.sbp_member_id,
       }),
-      agentOptions: {
-        pfx: Buffer.isBuffer(agentOptions.pfx) ? agentOptions.pfx : fs.readFileSync(agentOptions.pfx),
-        passphrase: agentOptions.passphrase,
-      },
+      agentOptions: this.__getAgentOptions(),
     };
 
     let order_info;
@@ -129,33 +126,35 @@ module.exports = class {
     return order_info;
   };
 
-  async getOrderStatus(options, token, RqUID, order_info, config) {
-    const agentOptions = {
-      pfx: config.pkcs12_filename,
-      passphrase: config.pkcs12_password,
-    };
+  /**
+   * Узнать статус оплаты
+   *
+   * @param {{partner_order_number: string, order_id: string}} args
+   *
+   * order_id - номер заказа в сбере присвоенный сбером
+   * partner_order_number - номер заказа присвоенный при создании нами в методе creteOrder
+   */
+  async getOrderStatus(args) {
+    const {token, rqUID} = await this.getToken('https://api.sberbank.ru/qr/order.status');
 
     const reqOptions = {
       url: 'https://api.sberbank.ru:8443/prod/qr/order/v3/status',
       method: 'POST',
       headers: {
         Authorization: `Bearer ${token.access_token}`,
-        'x-Introspect-RqUID': `${RqUID}`,
-        'RqUID': RqUID,
-        'X-IBM-Client-Id': `${config.client_id}`,
+        'x-Introspect-RqUID': `${rqUID}`,
+        'RqUID': rqUID,
+        'X-IBM-Client-Id': `${this.config.client_id}`,
         'Content-type': 'application/json',
       },
       body: JSON.stringify({
-        rq_uid: RqUID,
+        rq_uid: rqUID,
         rq_tm: `${new Date().toISOString().slice(0, 19) + 'Z'}`,
-        order_id: order_info.order_id,
-        "tid": config.terminal_id,
-        "partner_order_number": "774635526639"
+        order_id: args.order_id,
+        "tid": this.config.terminal_id,
+        "partner_order_number": args.partner_order_number,
       }),
-      agentOptions: {
-        pfx: Buffer.isBuffer(agentOptions.pfx) ? agentOptions.pfx : fs.readFileSync(agentOptions.pfx),
-        passphrase: agentOptions.passphrase,
-      },
+      agentOptions: this.__getAgentOptions(),
     };
 
     let status;
@@ -167,4 +166,6 @@ module.exports = class {
 
     return status;
   }
-};
+}
+
+module.exports = SberQr;
